@@ -1,0 +1,24 @@
+{
+  "name": "backend",
+  "module": "index.ts",
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.33",
+    "@types/pg": "^8.15.4",
+    "add": "^2.0.6",
+    "bun": "^1.2.15",
+    "kysely": "^0.28.2",
+    "kysely-codegen": "^0.18.5",
+    "linkedom": "^0.18.11",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@tanstack/router-plugin": "^1.121.16",
+    "@types/bun": "latest",
+    "@types/node": "^24.0.0"
+  },
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "dico": "bun run  C:/Users/PC/Desktop/wordSphere/backend/src/helper/start.ts"
+  },
+  "type": "module"
+}

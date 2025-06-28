@@ -1,0 +1,11 @@
+# bunfig.toml
+[alias]
+"@" = "./src"
+"@config" = "./src/config"
+"@features" = "./src/features"
+"@auth" = "./src/features/auth"
+"@shared" = "./src/shared"
+"@guards" = "./src/shared/guards"
+"@middleware" = "./src/shared/middleware"
+"@database" = "./src/shared/database"
+"@types" = "./src/shared/types"

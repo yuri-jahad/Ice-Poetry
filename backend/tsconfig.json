@@ -1,0 +1,44 @@
+{
+  "compilerOptions": {
+    // Enable latest features
+    "lib": ["ESNext", "DOM"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@core/*": ["src/core/*"],
+      "@database/*": ["src/core/database/*"],
+      "@features/*": ["src/features/*"],
+      "@shared/*": ["src/shared/*"],
+      "@user/*": ["src/features/user/*"],
+      "@auth/*": ["src/features/auth/*"],
+      "@vocabulary/*": ["src/features/vocabulary/*"],
+      "@session/*": ["src/features/session/*"],
+      "@words/*": ["src/features/vocabulary/words/*"],
+      "@app/*": ["src/core/app/*"],
+      "@definitions/*": ["src/features/vocabulary/definitions/*"],
+      "@lists/*": ["src/features/vocabulary/lists-management/*"]
+    },
+
+    // Bundler mode
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    // Best practices
+    "noImplicitAny": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+
+    // Some stricter flags (disabled by default)
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false
+  }
+}

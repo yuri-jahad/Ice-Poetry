@@ -6,6 +6,7 @@
     "@types/pg": "^8.15.4",
     "add": "^2.0.6",
     "bun": "^1.2.15",
+    "cloudinary": "^2.7.0",
     "kysely": "^0.28.2",
     "kysely-codegen": "^0.18.5",
     "linkedom": "^0.18.11",

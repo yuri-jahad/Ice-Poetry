@@ -22,3 +22,18 @@ export const adminGuard = {
   }
 }
 
+export const demoGuard = {
+  beforeHandle: ({ user, set, request }: any) => {
+    if (request.method === 'GET') {
+      return
+    }
+
+    if (user.username === 'Demo') {
+      set.status = 403
+      return {
+        error: 'Accès refusé',
+        message: 'Inaccessible uniquement pour le compte demo'
+      }
+    }
+  }
+}

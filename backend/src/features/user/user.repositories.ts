@@ -541,3 +541,95 @@ export async function supportTicketExistsForUser (
     return false
   }
 }
+
+/**
+ * Updates user profile (bio and location)
+ * Simple validation: user exists + optional fields
+ */
+export async function updateUserProfile (
+  userId: number,
+  bio?: string,
+  location?: string
+): Promise<{ success: boolean; error?: string; user?: USERS }> {
+  try {
+    // Vérifier que l'utilisateur existe
+    const userExists = await db
+      .selectFrom('USERS')
+      .select('id')
+      .where('id', '=', userId)
+      .executeTakeFirst()
+
+    if (!userExists) {
+      console.error(`❌ User ${userId} not found`)
+      return { success: false, error: 'User not found' }
+    }
+
+    // Préparer les données à mettre à jour
+    const updateData: Partial<Pick<USERS, 'bio' | 'location'>> = {}
+
+    if (bio !== undefined) {
+      // Limiter la bio à 200 caractères si elle existe
+      updateData.bio = bio.length > 200 ? bio.substring(0, 200) : bio
+    }
+
+    if (location !== undefined) {
+      // Limiter la location à 100 caractères si elle existe
+      updateData.location =
+        location.length > 100 ? location.substring(0, 100) : location
+    }
+
+    // Si rien à mettre à jour
+    if (Object.keys(updateData).length === 0) {
+      console.error('No fields to update')
+      return { success: false, error: 'No fields to update' }
+    }
+
+    // Mettre à jour le profil
+    const updatedUser = await db
+      .updateTable('USERS')
+      .set(updateData)
+      .where('id', '=', userId)
+      .returning(['id', 'username', 'bio', 'location', 'image_path', 'role'])
+      .executeTakeFirst()
+
+    if (!updatedUser) {
+      console.error(`❌ Failed to update profile for user ${userId}`)
+      return { success: false, error: 'Failed to update profile' }
+    }
+
+    console.log(`✅ Profile successfully updated for user ${userId}`)
+    return {
+      success: true,
+      user: updatedUser as USERS
+    }
+  } catch (error) {
+    console.error('❌ Database error in updateUserProfile:', error)
+    return { success: false, error: 'Internal server error' }
+  }
+}
+
+/**
+ * Gets user profile information
+ * Returns bio, location and other public profile data
+ */
+export async function getUserProfile (userId: number): Promise<{
+  id: number
+  username: string
+  bio: string | null
+  location: string | null
+  image_path: string | null
+  role: string
+} | null> {
+  try {
+    const user = await db
+      .selectFrom('USERS')
+      .select(['id', 'username', 'bio', 'location', 'image_path', 'role'])
+      .where('id', '=', userId)
+      .executeTakeFirst()
+
+    return user || null
+  } catch (error) {
+    console.error('❌ Error getting user profile:', error)
+    return null
+  }
+}

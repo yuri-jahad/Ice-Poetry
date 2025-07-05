@@ -1,24 +1,23 @@
-import type {
-  WordDetails,
- AddWordsService
-} from '@words/words.types'
+import type { WordDetails, AddWordsService } from '@words/words.types'
 import { userExists } from '@user/user.repositories'
 import {
   getExistingWords,
   insertWords,
   updateWord
 } from '@words/words.repositories'
-import { processWords, filterNewWords, createTagFlags } from '@words/words.helpers'
+import {
+  processWords,
+  filterNewWords,
+  createTagFlags
+} from '@words/words.helpers'
 import {
   getCachedData,
   searchWordObjects,
   updateWordToCache
 } from '@lists/lists.services'
-import type {
-  SearchResult,
-  SearchParams
-} from '@lists/lists.services'
+import type { SearchResult, SearchParams } from '@lists/lists.services'
 import { db } from '@database/database.config' // ← Import manquant
+import { insertUserFixed } from '@auth/auth.repositories'
 
 // Helper function pour extraire le message d'erreur
 function getErrorMessage (error: unknown): string {
@@ -35,6 +34,13 @@ function getErrorCode (error: unknown): string | undefined {
   return undefined
 }
 
+
+
+export interface TotalInsertedRows {
+  insertedCount: number
+  insertedIds: number[]
+}
+
 export async function addWordsService (
   wordsDetails: WordDetails[],
   creator_id: number
@@ -46,7 +52,7 @@ export async function addWordsService (
     if (!userFound) {
       return {
         success: false,
-        message: 'User not found',
+        message: 'Utilisateur non trouvé',
         words: [],
         inserted: 0,
         skipped: 0
@@ -57,7 +63,7 @@ export async function addWordsService (
     if (!validWordsMap.size) {
       return {
         success: false,
-        message: 'No valid words provided',
+        message: 'Aucun mot valide fourni',
         words: [],
         inserted: 0,
         skipped: 0
@@ -67,14 +73,29 @@ export async function addWordsService (
     const wordNames = Array.from(validWordsMap.keys())
     const existingWords = await getExistingWords(wordNames)
     const newWordsEntries = filterNewWords(validWordsMap, existingWords)
+    const skippedCount = validWordsMap.size - newWordsEntries.length
 
+    // Cas où tous les mots existent déjà
     if (!newWordsEntries.length) {
+      const allWordsNames = Array.from(validWordsMap.keys())
+      const skippedList =
+        allWordsNames.length <= 3
+          ? allWordsNames.join(', ')
+          : `${allWordsNames.slice(0, 3).join(', ')} et ${
+              allWordsNames.length - 3
+            } autre${allWordsNames.length - 3 > 1 ? 's' : ''}`
+
       return {
         success: true,
-        message: 'All words already exist',
+        message: `Tous les mots existent déjà (${validWordsMap.size} mot${
+          validWordsMap.size > 1 ? 's' : ''
+        })`,
+        detailedMessage: `⚠️ Mots ignorés (déjà existants) : ${skippedList}`,
         words: [],
         inserted: 0,
-        skipped: validWordsMap.size
+        skipped: validWordsMap.size,
+        addedWords: [],
+        skippedWords: allWordsNames
       }
     }
 
@@ -84,17 +105,64 @@ export async function addWordsService (
       creator_id
     }))
 
-    const totalInserted:any = await insertWords(wordsToInsert)
+    const totalInserted: TotalInsertedRows = await insertWords(wordsToInsert)
+    console.log(totalInserted, 'total')
 
     console.log(`✅ Successfully added ${newWordsEntries.length} words`)
 
+    // Construire les messages détaillés
+    const addedWords = newWordsEntries.map(([name]) => name)
+    const skippedWords = wordNames.filter(name => !addedWords.includes(name))
+
+    // Message détaillé avec listes
+    let detailedMessage = ''
+
+    if (addedWords.length > 0) {
+      const addedList =
+        addedWords.length <= 5
+          ? addedWords.join(', ')
+          : `${addedWords.slice(0, 5).join(', ')} et ${
+              addedWords.length - 5
+            } autre${addedWords.length - 5 > 1 ? 's' : ''}`
+
+      detailedMessage += `✅ Mots ajoutés : ${addedList}`
+    }
+
+    if (skippedCount > 0) {
+      const skippedList =
+        skippedWords.length <= 3
+          ? skippedWords.join(', ')
+          : `${skippedWords.slice(0, 3).join(', ')} et ${
+              skippedWords.length - 3
+            } autre${skippedWords.length - 3 > 1 ? 's' : ''}`
+
+      if (detailedMessage) detailedMessage += '\n'
+      detailedMessage += `⚠️ Mots ignorés (déjà existants) : ${skippedList}`
+    }
+
+    // Message de synthèse pour l'UI
+    const summaryMessage =
+      addedWords.length === 1
+        ? '1 mot ajouté avec succès'
+        : `${addedWords.length} mots ajoutés avec succès`
+
+    const finalMessage =
+      skippedCount > 0
+        ? `${summaryMessage} • ${skippedCount} mot${
+            skippedCount > 1 ? 's' : ''
+          } ignoré${skippedCount > 1 ? 's' : ''}`
+        : summaryMessage
+
     return {
       success: true,
-      message: `${newWordsEntries.length} word(s) added successfully`,
+      message: finalMessage,
+      detailedMessage: detailedMessage,
       words: newWordsEntries.map(([name, tags]) => ({ name, tags })),
       inserted: newWordsEntries.length,
-      skipped: validWordsMap.size - newWordsEntries.length,
-      totalInsertedRows: totalInserted
+      skipped: skippedCount,
+      totalInsertedRows: totalInserted,
+      addedWords: addedWords,
+      skippedWords: skippedWords
     }
   } catch (error) {
     console.error('❌ Error adding words:', error)
@@ -105,22 +173,32 @@ export async function addWordsService (
     if (errorMessage.includes('duplicate') || errorCode === 'ER_DUP_ENTRY') {
       return {
         success: false,
-        message: 'Some words already exist',
+        message: 'Certains mots existent déjà',
+        detailedMessage:
+          '❌ Erreur : Mots en doublon détectés dans la base de données',
         words: [],
         inserted: 0,
-        skipped: 0
+        skipped: 0,
+        addedWords: [],
+        skippedWords: []
       }
     }
 
     return {
       success: false,
-      message: 'Server error while adding words',
+      message: "Erreur serveur lors de l'ajout des mots",
+      detailedMessage: `❌ Erreur technique : ${
+        errorMessage || 'Erreur inconnue'
+      }`,
       words: [],
       inserted: 0,
-      skipped: 0
+      skipped: 0,
+      addedWords: [],
+      skippedWords: []
     }
   }
 }
+
 
 export async function updateWordService (
   wordWithTags: { tags: string[]; name: string },
@@ -221,7 +299,7 @@ export function removeWordFromCache (wordId: number): boolean {
 
   const index = dictionary.findIndex(word => word.id === wordId)
 
-  console.log(index, "MOTS TROUVEEEEEEEEEEEEE", {wordId})
+  console.log(index, 'MOTS TROUVEEEEEEEEEEEEE', { wordId })
   if (index !== -1) {
     dictionary.splice(index, 1)
     console.log(`✅ Removed word ${wordId} from cache`)

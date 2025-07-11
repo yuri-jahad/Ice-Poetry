@@ -1,4 +1,4 @@
-import type { USERS_ROLES } from '@database/database.types'
+import type { USERS_ROLES } from '@core/database/database.types';
 
 export interface WordDetailsInsert {
   id: number
@@ -289,10 +289,6 @@ export function isDeleteWordSuccess (
 export function isWordError (response: any): response is WordError {
   return 'error' in response && typeof response.error === 'string'
 }
-
-// ===============================
-// HELPER TYPES
-// ===============================
 
 export type WordWithTags = {
   name: string

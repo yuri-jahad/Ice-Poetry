@@ -17,8 +17,6 @@ const SOURCE_MAP = {
   7: 'Robert'
 } as const
 
-// Sources accessibles par défaut (peut être configuré)
-const ACCESSIBLE_SOURCES = [1, 2, 3, 5, 6, 7] // Toutes accessibles par défaut
 
 function sortDefinitionsByPriority (definitions: DefDetails[]): DefDetails[] {
   // Créer un Map pour accès O(1)

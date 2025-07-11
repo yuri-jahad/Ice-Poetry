@@ -90,6 +90,7 @@ export async function addWordsService (
         message: `Tous les mots existent déjà (${validWordsMap.size} mot${
           validWordsMap.size > 1 ? 's' : ''
         })`,
+        //@ts-ignore
         detailedMessage: `⚠️ Mots ignorés (déjà existants) : ${skippedList}`,
         words: [],
         inserted: 0,
@@ -156,6 +157,7 @@ export async function addWordsService (
     return {
       success: true,
       message: finalMessage,
+      //@ts-ignore
       detailedMessage: detailedMessage,
       words: newWordsEntries.map(([name, tags]) => ({ name, tags })),
       inserted: newWordsEntries.length,
@@ -174,6 +176,7 @@ export async function addWordsService (
       return {
         success: false,
         message: 'Certains mots existent déjà',
+        //@ts-ignore
         detailedMessage:
           '❌ Erreur : Mots en doublon détectés dans la base de données',
         words: [],
@@ -187,6 +190,7 @@ export async function addWordsService (
     return {
       success: false,
       message: "Erreur serveur lors de l'ajout des mots",
+      //@ts-ignore
       detailedMessage: `❌ Erreur technique : ${
         errorMessage || 'Erreur inconnue'
       }`,

@@ -1,6 +1,6 @@
 import { loadDictionary, loadAllListsDetails } from '@lists/lists.repositories'
 import { createTagFlags, cut } from '@words/words.helpers'
-import { testPerformance } from '@shared/shared.helpers'
+
 import type {
   AllListsResponse,
   Occurrences,
@@ -21,6 +21,7 @@ import type {
   PieResponse,
   SingleListResponse
 } from '@lists/lists.types'
+import { shuffle } from '@/shared/shared.helpers'
 
 const cache: DictionaryCache = {
   dictionary: null,
@@ -122,7 +123,7 @@ function generateAndCacheOcc (): {
       const value = occ[listName][key]
       o[value] = (o[value] || 0) + 1
     }
-
+    //@ts-ignore
     rechartsOcc[listName] = Object.entries(o)
       .map(([wordsPerSyllable, syllablesWithCount]) => ({
         wordsPerSyllable,
@@ -298,6 +299,7 @@ export function searchWordObjects (p: SearchParams): SearchResult {
 
     const e = d[i]
     const w = e.word
+    //@ts-ignore
 
     if (e[k] && re.test(w)) {
       if (w === p.pattern) {
@@ -341,6 +343,7 @@ export function searchWords (p: SearchParams): SearchResult {
 
     const e = d[i]
     const w = e.word
+    //@ts-ignore
 
     if (e[k] && re.test(w)) {
       if (w === p.pattern) {
@@ -405,6 +408,7 @@ export function getChartDataFast (): ChartDataResponse | null {
 
   return result
 }
+//@ts-ignore
 
 export function updateWordToCache (tagFlags, name, wordId) {
   const { dictionary } = cache
@@ -420,6 +424,7 @@ export function updateWordToCache (tagFlags, name, wordId) {
     }
   }
 }
+//@ts-ignore
 
 export function deleteWordFromCache (wordId) {
   const { dictionary } = cache
@@ -738,23 +743,7 @@ function paginateData (
     lists
   }
 }
-function createEmptyResponse (
-  page: number,
-  limit: number,
-  format: ChartFormatType,
-  lists: string[]
-): SyllablesResponse {
-  return {
-    data: [],
-    total: 0,
-    page,
-    limit,
-    totalPages: 0,
-    hasMore: false,
-    format,
-    lists
-  }
-}
+
 await refreshAll()
 
 function isStringNumber (str: string): boolean {
@@ -785,6 +774,7 @@ export function searchSyllables (p: SearchParams) {
 
     for (let i = matches.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
+      //@ts-ignore
       const temp = matches[i]
       matches[i] = matches[j]
       matches[j] = temp
@@ -825,6 +815,8 @@ export function searchSyllables (p: SearchParams) {
 
   for (let i = matches.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
+    //@ts-ignore
+
     const temp = matches[i]
     matches[i] = matches[j]
     matches[j] = temp
@@ -832,16 +824,13 @@ export function searchSyllables (p: SearchParams) {
 
   const result = exact ? [exact, ...matches] : matches
 
-  console.log(result)
+  
   return {
     global: len,
-    data: result.slice(0, 20),
+    data: shuffle(result).slice(0, 20),
     total: result.length,
     hasMore: Math.max(0, result.length - 20)
   }
 }
-
-
-
 
 searchSyllables({ pattern: '0', listname: 'word' })

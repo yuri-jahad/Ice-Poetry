@@ -2,6 +2,25 @@
  *  Definitions with wordByName
  */
 
+
+export interface TYPE_DEFINITIONS {
+  id: number
+  name: string
+}
+
+export interface DEFINITION {
+  id: number
+  word_id: number
+  definition: string
+  source_id: number
+  created_at: Date
+}
+
+export interface DICTIONARY_SOURCES {
+  id: number
+  name: string
+}
+
 export interface WordDetails {
   id: number
   word: string

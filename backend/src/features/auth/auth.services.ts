@@ -1,5 +1,4 @@
 // auth.service.ts
-import type { UserClient } from '@user/user.types'
 import type {
   LoginServiceResponse,
   LogoutServiceResponse,
@@ -7,6 +6,7 @@ import type {
 } from '@auth/auth.types'
 import { authenticateUser } from '@user/user.repositories'
 import { createToken, mapToUserClient } from '@auth/auth.helpers'
+import type { User } from '@user/user.types';
 
 export async function login (
   username: string,
@@ -41,7 +41,7 @@ export async function login (
 }
 
 export function verify (
-  user: UserClient | null,
+  user: User | null,
   isAuthenticated: boolean
 ): VerifyServiceResponse {
   if (!user || !isAuthenticated) {

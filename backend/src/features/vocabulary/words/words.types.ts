@@ -1,4 +1,20 @@
-import type { USERS_ROLES } from '@core/database/database.types';
+import type { USER_ROLES } from '@user/user.types'
+
+export interface WORD {
+  created_at: Date
+  creator_id: number | null
+  id: number
+  is_adverb: number
+  is_animal: number | null
+  is_demonym: number
+  is_verb: number
+  word: string
+}
+
+export interface WORD_TYPES {
+  type_id: number
+  word_id: number
+}
 
 export interface WordDetailsInsert {
   id: number
@@ -7,11 +23,10 @@ export interface WordDetailsInsert {
   creator_id: number
   tags: string[]
   username: string
-  role: USERS_ROLES
+  role: USER_ROLES
   image_path: string
 }
 
-/** Update Word */
 export interface UpdateWordServiceSuccess {
   success: true
   message: string
@@ -47,7 +62,7 @@ export interface DeleteWordError {
   code?: string
 }
 
-/** Find Words */
+
 export interface FindWordsServiceSuccess {
   success: true
   data: any[]
@@ -104,13 +119,12 @@ export type FindWordsServiceResponse =
   | FindWordsServiceSuccess
   | FindWordsServiceError
 
-
 export interface UpdateWordParams {
-  id: string;
+  id: string
 }
 
 export interface DeleteWordParams {
-  id: string; 
+  id: string
 }
 
 export interface FindWordBody {

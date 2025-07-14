@@ -1,6 +1,6 @@
 // auth.helpers.ts
 import type { USERS } from "@database/database.types";
-import type { UserClient } from "@user/user.types";
+import type { User } from "@user/user.types";
 
 /**
  * Verifies a JWT token and returns the user payload
@@ -9,7 +9,7 @@ import type { UserClient } from "@user/user.types";
 export async function verifyToken(
   token: string,
   jwt: any
-): Promise<UserClient | null> {
+): Promise<User | null> {
   try {
     if (!token) {
       return null;
@@ -27,7 +27,7 @@ export async function verifyToken(
  * Optimized: better error handling and validation
  */
 export async function createToken(
-  payload: UserClient,
+  payload: User,
   jwt: any
 ): Promise<string> {
   if (!process.env.JWT_SECRET) {
@@ -70,15 +70,15 @@ export function createExpiredCookie(): string {
 }
 
 /**
- * Maps a database User entity to a UserClient (removes sensitive data)
+ * Maps a database User entity to a User (removes sensitive data)
  * Optimized: validation and error handling
  */
-export function mapToUserClient(user: USERS): UserClient {
+export function mapToUserClient(user: USERS): User {
   if (!user) {
     throw new Error("User is required for mapping");
   }
 
-  if (!user.id || !user.username || !user.image_path) {
+  if (!user.id || !user.username) {
     throw new Error("Invalid user data: missing required fields");
   }
 
@@ -86,7 +86,7 @@ export function mapToUserClient(user: USERS): UserClient {
     id: user.id,
     username: user.username,
     role: user.role,
-    avatar: user.image_path,
+    image_path: user.image_path,
   };
 }
 

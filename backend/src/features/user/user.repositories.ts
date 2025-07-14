@@ -1,5 +1,4 @@
 // auth.repository.ts
-import { testPerformance } from '@/shared/shared.helpers'
 import { db } from '@database/database.config'
 import type {
   SUPPORT_TICKETS,
@@ -8,6 +7,7 @@ import type {
   USERS
 } from '@database/database.types'
 import { sql } from 'kysely'
+import type { User } from '@user/user.types'
 
 /**
  * Authenticates a user with username/password
@@ -35,7 +35,6 @@ export async function authenticateUser (
     return null
   }
 }
-
 
 /**
  * Changes a user's password - Simple version
@@ -102,7 +101,6 @@ export async function changeUserPassword (
     return { success: false, error: 'Internal server error' }
   }
 }
-
 
 /**
  * Retrieves a user by username
@@ -612,21 +610,14 @@ export async function updateUserProfile (
  * Gets user profile information
  * Returns bio, location and other public profile data
  */
-export async function getUserProfile (userId: number): Promise<{
-  id: number
-  username: string
-  bio: string | null
-  location: string | null
-  image_path: string | null
-  role: string
-} | null> {
+export async function getUserProfile (userId: number): Promise<User|null> {
   try {
     const user = await db
       .selectFrom('USERS')
-      .select(['id', 'username', 'bio', 'location', 'image_path', 'role'])
+      .select(['id', 'username', 'bio', 'location', 'image_path', 'role', 'syllable_color'])
       .where('id', '=', userId)
       .executeTakeFirst()
-
+    
     return user || null
   } catch (error) {
     console.error('❌ Error getting user profile:', error)

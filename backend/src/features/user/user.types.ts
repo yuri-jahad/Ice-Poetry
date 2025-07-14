@@ -1,25 +1,12 @@
-import type { USERS, USERS_ROLES } from '@database/database.types'
-import type { Static } from '@sinclair/typebox'
+export type USER_ROLES = 'Demo' | 'Guest' | 'Moderator' | 'Administrator'
 
-import {
-  UserRolesSchema,
-  UserClientSchema,
-  CreateUserRequestSchema,
-  CreateUserResponseSchema,
-  ErrorResponseSchema
-} from '@user/user.schemas'
-
-export interface UserBase {
+export interface User {
   id: number
   username: string
-  role: USERS_ROLES
+  role: USER_ROLES
+  bio?: string | null
+  syllable_color?: string
+  password?: string
+  location?: string | null
+  image_path: string | null
 }
-
-export type UserServer = USERS
-export type UserRoles = Static<typeof UserRolesSchema>
-export type UserClient = Static<typeof UserClientSchema>
-export type CreateUserRequest = Static<typeof CreateUserRequestSchema>
-export type CreateUserResponse = Static<typeof CreateUserResponseSchema>
-export type ErrorResponse = Static<typeof ErrorResponseSchema>
-
-

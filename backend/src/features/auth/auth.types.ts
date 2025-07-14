@@ -1,8 +1,8 @@
 import type { USERS_ROLES } from '@database/database.types'
-
+import type { User } from '@user/user.types'
 export interface LoginServiceSuccess {
   success: true
-  user: UserClient
+  user: User
   token: string
 }
 
@@ -14,7 +14,7 @@ export interface LoginServiceError {
 export type LoginServiceResponse = LoginServiceSuccess | LoginServiceError
 
 export interface VerifyServiceSuccess {
-  user: UserClient
+  user: User
   isAuthenticated: true
 }
 
@@ -56,21 +56,10 @@ export interface ErrorResponse {
   code: string
 }
 
-// frontend-types/auth.ts
-// Types convertis depuis auth.schemas.ts - Compatible frontend/backend
-
-// Types UserClient (assumé depuis user.schemas)
-export interface UserClient {
-  username: string
-  role: 'Guest' | 'Moderator' | 'Administrator'
-  avatar: string
-  id: number
-}
-
 /** Login Types */
 export interface LoginSuccess {
   success: true
-  user: UserClient
+  user: User
 }
 
 export interface LoginError {
@@ -84,7 +73,7 @@ export interface LoginBody {
 
 /** Verify Types */
 export interface VerifySuccess {
-  user: UserClient
+  user: User
   isAuthenticated: true
 }
 

@@ -28,7 +28,8 @@ export const demoGuard = {
       return
     }
 
-    if (user.username === 'Demo') {
+    if (user.username === 'demo') {
+      console.log(user)
       set.status = 403
       return {
         error: 'Accès refusé',

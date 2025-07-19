@@ -3,8 +3,7 @@ import { db } from '@database/database.config'
 import type {
   SUPPORT_TICKETS,
   SUPPORT_TICKETS_STATUS,
-  SUPPORT_TICKETS_TYPE,
-  USERS
+  SUPPORT_TICKETS_TYPE
 } from '@database/database.types'
 import { sql } from 'kysely'
 import type { User } from '@user/user.types'
@@ -16,7 +15,7 @@ import type { User } from '@user/user.types'
 export async function authenticateUser (
   username: string,
   password: string
-): Promise<USERS | null> {
+): Promise<User | null> {
   try {
     const user = await db
       .selectFrom('USERS')
@@ -24,7 +23,7 @@ export async function authenticateUser (
       .where('username', '=', username)
       .executeTakeFirst()
 
-    if (!user) {
+    if (!user || !user.password) {
       return null
     }
 
@@ -59,7 +58,7 @@ export async function changeUserPassword (
       .where('id', '=', userId)
       .executeTakeFirst()
 
-    if (!user) {
+    if (!user || !user.password) {
       console.error(`❌ User ${userId} not found`)
       return { success: false, error: 'User not found' }
     }
@@ -108,7 +107,7 @@ export async function changeUserPassword (
  */
 export async function getUserByUsername (
   username: string
-): Promise<USERS | null> {
+): Promise<User | null> {
   try {
     return (
       (await db
@@ -127,7 +126,7 @@ export async function getUserByUsername (
  * Retrieves a user by ID
  * Optimized: error handling
  */
-export async function getUserById (id: number): Promise<USERS | null> {
+export async function getUserById (id: number): Promise<User | null> {
   try {
     return (
       (await db
@@ -165,7 +164,7 @@ export async function userExists (id: number): Promise<boolean> {
 export async function updateUserAvatar (
   userId: number,
   avatarUrl: string
-): Promise<USERS | null> {
+): Promise<User | null> {
   try {
     const updatedUser = await db
       .updateTable('USERS')
@@ -180,7 +179,7 @@ export async function updateUserAvatar (
     }
 
     console.log(`✅ Avatar updated for user ${userId}: ${avatarUrl}`)
-    return updatedUser as USERS
+    return updatedUser as User
   } catch (error) {
     console.error('❌ Error updating user avatar in database:', error)
     return null
@@ -213,7 +212,7 @@ export interface CreateSupportTicket {
 
 // Type pour ticket avec info utilisateur
 export interface SupportTicketWithUser extends SUPPORT_TICKETS {
-  user: USERS
+  user: User
 }
 
 /**
@@ -547,10 +546,10 @@ export async function supportTicketExistsForUser (
 export async function updateUserProfile (
   userId: number,
   bio?: string,
+  syllable_color?: string,
   location?: string
-): Promise<{ success: boolean; error?: string; user?: USERS }> {
+): Promise<{ success: boolean; error?: string; user?: User }> {
   try {
-    // Vérifier que l'utilisateur existe
     const userExists = await db
       .selectFrom('USERS')
       .select('id')
@@ -562,33 +561,43 @@ export async function updateUserProfile (
       return { success: false, error: 'User not found' }
     }
 
-    // Préparer les données à mettre à jour
-    const updateData: Partial<Pick<USERS, 'bio' | 'location'>> = {}
+    const updateData: Partial<
+      Pick<User, 'bio' | 'location' | 'syllable_color'>
+    > = {}
 
-    if (bio !== undefined) {
-      // Limiter la bio à 200 caractères si elle existe
+    if (bio) {
       updateData.bio = bio.length > 200 ? bio.substring(0, 200) : bio
     }
 
-    if (location !== undefined) {
-      // Limiter la location à 100 caractères si elle existe
+    if (location) {
       updateData.location =
         location.length > 100 ? location.substring(0, 100) : location
     }
 
-    // Si rien à mettre à jour
+    if (syllable_color) {
+      updateData.syllable_color = syllable_color
+    }
+    
     if (Object.keys(updateData).length === 0) {
       console.error('No fields to update')
       return { success: false, error: 'No fields to update' }
     }
 
-    // Mettre à jour le profil
     const updatedUser = await db
       .updateTable('USERS')
       .set(updateData)
       .where('id', '=', userId)
-      .returning(['id', 'username', 'bio', 'location', 'image_path', 'role'])
+      .returning([
+        'id',
+        'username',
+        'bio',
+        'location',
+        'image_path',
+        'role',
+        'syllable_color'
+      ])
       .executeTakeFirst()
+      console.log([updatedUser])
 
     if (!updatedUser) {
       console.error(`❌ Failed to update profile for user ${userId}`)
@@ -598,7 +607,7 @@ export async function updateUserProfile (
     console.log(`✅ Profile successfully updated for user ${userId}`)
     return {
       success: true,
-      user: updatedUser as USERS
+      user: updatedUser as User
     }
   } catch (error) {
     console.error('❌ Database error in updateUserProfile:', error)
@@ -610,14 +619,22 @@ export async function updateUserProfile (
  * Gets user profile information
  * Returns bio, location and other public profile data
  */
-export async function getUserProfile (userId: number): Promise<User|null> {
+export async function getUserProfile (userId: number): Promise<User | null> {
   try {
     const user = await db
       .selectFrom('USERS')
-      .select(['id', 'username', 'bio', 'location', 'image_path', 'role', 'syllable_color'])
+      .select([
+        'id',
+        'username',
+        'bio',
+        'location',
+        'image_path',
+        'role',
+        'syllable_color'
+      ])
       .where('id', '=', userId)
       .executeTakeFirst()
-    
+
     return user || null
   } catch (error) {
     console.error('❌ Error getting user profile:', error)

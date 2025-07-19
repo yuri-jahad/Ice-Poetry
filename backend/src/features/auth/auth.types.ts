@@ -1,5 +1,5 @@
-import type { USERS_ROLES } from '@database/database.types'
-import type { User } from '@user/user.types'
+
+import type { User, USER_ROLES } from '@user/user.types'
 export interface LoginServiceSuccess {
   success: true
   user: User
@@ -39,14 +39,14 @@ export type LogoutServiceResponse = LogoutServiceSuccess | LogoutServiceError
 export interface CreateUserRequest {
   username: string
   password: string
-  role: USERS_ROLES
+  role: USER_ROLES
   image_path?: string | null
 }
 
 export interface CreateUserResponse {
   id: number
   username: string
-  role: USERS_ROLES
+  role: USER_ROLES
   image_path: string | null
 }
 

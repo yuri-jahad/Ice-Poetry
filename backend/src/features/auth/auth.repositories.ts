@@ -1,10 +1,9 @@
-import type { USERS } from '@database/database.types'
-import { db } from '@database/database.config'
 
-/**
- * Version corrigée de insertUser (pour remplacer la tienne)
- */
-export async function insertUserFixed(data:any): Promise<USERS | null> {
+import { db } from '@database/database.config'
+import type { User } from '@user/user.types';
+
+
+export async function insertUserFixed(data:any): Promise<User | null> {
     try {
       const newUser = await db
         .insertInto('USERS')

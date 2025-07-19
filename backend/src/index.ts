@@ -1,9 +1,15 @@
 import { appConfig, plugins } from '@app/app.config'
 import { authMiddleware } from '@auth/auth.middlewares'
 import { appRoutes } from '@app/app.routes'
+import { staticPlugin } from '@elysiajs/static'
+
 import Elysia from 'elysia'
 
 const app = new Elysia()
+  .use(staticPlugin({
+    assets: "./public/uploads/avatars",
+    prefix: "/uploads/avatars"
+  }))
   .use(plugins.jwt)
   .use(plugins.logger)
   .use(plugins.cookie)

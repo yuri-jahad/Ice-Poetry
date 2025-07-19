@@ -50,7 +50,7 @@ export function verify (
       isAuthenticated: false
     }
   }
-
+ console.log(user, "USEEEEEEEEEEEEEEEER")
   return {
     user,
     isAuthenticated: true

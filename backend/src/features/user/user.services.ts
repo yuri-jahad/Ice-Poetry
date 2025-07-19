@@ -1,39 +1,12 @@
+import { unlink, mkdir, readdir, access } from 'node:fs/promises'
+import { join } from 'node:path'
+import { spawn } from 'node:child_process'
+import sharp from 'sharp'
 import type { CreateUserRequest } from '@auth/auth.types'
-
 import { insertUserFixed } from '@auth/auth.repositories'
-import { v2 as cloudinary } from 'cloudinary'
 import type { User } from '@user/user.types'
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
-})
-
-export async function createUser (
-  userData: CreateUserRequest
-): Promise<User | null> {
-  try {
-    const hashedPassword = await Bun.password.hash(userData.password, {
-      algorithm: 'bcrypt',
-      cost: 12
-    })
-    const userToInsert: Omit<User, 'id'> = {
-      username: userData.username,
-      password: hashedPassword,
-      role: userData.role,
-      image_path: userData.image_path || null
-    }
-
-    const newUser = await insertUserFixed(userToInsert)
-    return newUser
-  } catch (error) {
-    console.error('Error creating user:', error)
-    return null
-  }
-}
-
-// 🎯 Types pour une meilleure sécurité de type
+// 🎯 Types pour compatibilité avec votre code existant
 interface UploadResult {
   secure_url: string
   public_id: string
@@ -49,10 +22,11 @@ interface UploadResult {
 interface OptimizedUrls {
   webp?: string
   avif?: string
-  mp4?: string
   webm?: string
-  poster?: string
   original: string
+  small?: string
+  medium?: string
+  large?: string
 }
 
 interface UsageStats {
@@ -62,102 +36,37 @@ interface UsageStats {
   percentageUsed: number
   resetDate: string
   isNearLimit: boolean
-  cloudinaryData?: {
-    resources: number
-    transformations: number
-    storage: number
+  diskUsage: {
+    totalFiles: number
+    totalSizeMB: number
+    averageCompressionRatio: number
+    estimatedSavingsMB: number
   }
   error?: string
 }
 
-interface MediaTypeConfig {
-  resource_type: 'image' | 'video'
-  transformations: any[]
-  eager_transformations: any[]
-  formats: string[]
-}
-
+// 🚀 SERVICE AVATAR LOCAL SIMPLIFIÉ - 2 images par utilisateur max
 export class AvatarService {
   private static uploadCount = 0
   private static monthlyReset = new Date().getMonth()
-  private static readonly MONTHLY_LIMIT = 500
+  private static readonly MONTHLY_LIMIT = 10000
+  private static readonly UPLOAD_DIR = './public/uploads/avatars'
+  private static readonly TEMP_DIR = './public/uploads/temp'
+  private static readonly BASE_URL =
+    process.env.BASE_URL || 'http://localhost:3000'
+  private static readonly MAX_SIZE = 10 * 1024 * 1024 // 10MB
+  private static ffmpegAvailable: boolean | null = null
 
-  private static readonly MEDIA_CONFIGS: Record<string, MediaTypeConfig> = {
-    image: {
-      resource_type: 'image',
-      transformations: [
-        {
-          width: 200,
-          height: 200,
-          crop: 'fill',
-          gravity: 'face',
-          quality: 'auto:good',
-          format: 'auto',
-          dpr: 'auto',
-          fetch_format: 'auto'
-        }
-      ],
-      eager_transformations: [
-        { format: 'webp', quality: 'auto:good' },
-        { format: 'avif', quality: 'auto:good' },
-        { format: 'jpg', quality: 'auto:good' }
-      ],
-      formats: ['webp', 'avif', 'jpg']
-    },
-    gif: {
-      resource_type: 'video',
-      transformations: [
-        {
-          width: 200,
-          height: 200,
-          crop: 'fill',
-          gravity: 'center',
-          quality: 'auto:good',
-          video_codec: 'auto',
-          format: 'auto',
-          flags: 'streaming_attachment',
-          bit_rate: '400k',
-          fps: 12
-        }
-      ],
-      eager_transformations: [
-        { format: 'mp4', video_codec: 'h264', quality: 'auto:good' },
-        { format: 'webm', video_codec: 'vp9', quality: 'auto:good' },
-        { format: 'jpg', video_sampling: 'auto' } // Poster frame
-      ],
-      formats: ['mp4', 'webm', 'jpg']
-    },
-
-    video: {
-      resource_type: 'video',
-      transformations: [
-        {
-          width: 200,
-          height: 200,
-          crop: 'fill',
-          gravity: 'center',
-          quality: 'auto:good',
-          video_codec: 'auto',
-          bit_rate: '500k',
-          fps: 15
-        }
-      ],
-      eager_transformations: [
-        { format: 'mp4', video_codec: 'h264' },
-        { format: 'webm', video_codec: 'vp9' },
-        { format: 'jpg', video_sampling: 'auto' }
-      ],
-      formats: ['mp4', 'webm', 'jpg']
-    }
+  // 🎯 Configuration simplifiée - seulement 2 tailles
+  private static readonly AVATAR_SIZES = {
+    small: { width: 50, height: 50, quality: 80 },
+    medium: { width: 150, height: 150, quality: 85 }
   }
 
-  // 🧩 Cache pour éviter les appels API répétés
+  // 🧩 Cache intelligent
   private static cache = new Map<string, { data: any; timestamp: number }>()
-  private static readonly CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+  private static readonly CACHE_TTL = 10 * 60 * 1000 // 10 minutes
 
-  /**
-   * 💾 Système de cache intelligent
-   */
   private static getCached<T> (key: string): T | null {
     const cached = this.cache.get(key)
     if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
@@ -171,169 +80,314 @@ export class AvatarService {
     this.cache.set(key, { data, timestamp: Date.now() })
   }
 
-  /**
-   * 🔍 Détection intelligente du type de média
-   */
-  private static detectMediaType (
-    mimeType: string,
-    fileName?: string
-  ): 'image' | 'gif' | 'video' {
-    // Vérification par MIME type d'abord
-    if (mimeType.startsWith('video/')) return 'video'
-    if (mimeType === 'image/gif') return 'gif'
-
-    // Vérification par extension de fichier
-    if (fileName) {
-      const ext = fileName.toLowerCase().split('.').pop()
-      if (['mp4', 'webm', 'mov', 'avi'].includes(ext || '')) return 'video'
-      if (ext === 'gif') return 'gif'
+  private static async ensureUploadDir (): Promise<void> {
+    try {
+      await access(this.UPLOAD_DIR)
+    } catch {
+      await mkdir(this.UPLOAD_DIR, { recursive: true })
     }
 
+    try {
+      await access(this.TEMP_DIR)
+    } catch {
+      await mkdir(this.TEMP_DIR, { recursive: true })
+    }
+  }
+
+  /**
+   * 🔧 Vérification de la disponibilité de FFmpeg
+   */
+  private static async checkFFmpeg (): Promise<boolean> {
+    if (this.ffmpegAvailable !== null) {
+      return this.ffmpegAvailable
+    }
+
+    try {
+      const child = spawn('ffmpeg', ['-version'], { stdio: 'pipe' })
+      const result = await new Promise<boolean>(resolve => {
+        child.on('close', code => resolve(code === 0))
+        child.on('error', () => resolve(false))
+        setTimeout(() => {
+          child.kill()
+          resolve(false)
+        }, 3000)
+      })
+
+      this.ffmpegAvailable = result
+      console.log(`🎬 FFmpeg ${result ? 'available' : 'not available'}`)
+      return result
+    } catch {
+      this.ffmpegAvailable = false
+      return false
+    }
+  }
+
+  /**
+   * 🎬 Exécution de commande FFmpeg
+   */
+  private static async runFFmpeg (args: string[]): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn('ffmpeg', args, { stdio: 'pipe' })
+
+      let stderr = ''
+      child.stderr?.on('data', data => {
+        stderr += data.toString()
+      })
+
+      child.on('close', code => {
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new Error(`FFmpeg failed with code ${code}: ${stderr}`))
+        }
+      })
+
+      child.on('error', error => {
+        reject(error)
+      })
+
+      setTimeout(() => {
+        child.kill()
+        reject(new Error('FFmpeg timeout'))
+      }, 30000)
+    })
+  }
+
+  /**
+   * 🔍 Détection du type de média
+   */
+  private static detectMediaType (mimeType: string): 'image' | 'gif' | 'video' {
+    if (mimeType === 'image/gif') return 'gif'
+    if (mimeType.startsWith('video/')) return 'video'
     return 'image'
   }
 
   /**
-   * 🌐 Génération intelligente d'URLs optimisées
+   * 🗑️ Nettoyage complet des anciens avatars d'un utilisateur
    */
-  private static generateOptimizedUrls (
-    publicId: string,
-    mediaType: string,
-    originalFormat: string
-  ): OptimizedUrls {
-    const baseUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}`
-    const basePath = `${baseUrl}/${
-      mediaType === 'video' ? 'video' : 'image'
-    }/upload`
-    const baseTransform = 'w_200,h_200,c_fill,g_face,q_auto:good'
-
-    const urls: OptimizedUrls = {
-      original: `${basePath}/${baseTransform}/${publicId}.${originalFormat}`
-    }
-
-    // 🖼️ URLs pour images
-    if (mediaType === 'image') {
-      urls.webp = `${basePath}/${baseTransform},f_webp/${publicId}.webp`
-      urls.avif = `${basePath}/${baseTransform},f_avif/${publicId}.avif`
-    }
-
-    // 🎬 URLs pour vidéos/GIFs
-    if (mediaType === 'gif' || mediaType === 'video') {
-      urls.mp4 = `${baseUrl}/video/upload/${baseTransform},f_mp4,vc_h264,br_400k,fps_12/${publicId}.mp4`
-      urls.webm = `${baseUrl}/video/upload/${baseTransform},f_webm,vc_vp9,br_400k,fps_12/${publicId}.webm`
-      urls.poster = `${baseUrl}/video/upload/${baseTransform},f_jpg,so_auto/${publicId}.jpg`
-    }
-
-    return urls
-  }
-
-  /**
-   * 🔧 Validation des variables d'environnement avec cache
-   */
-  private static validateCloudinaryConfig (): void {
-    const cacheKey = 'cloudinary-config-validated'
-    const cached = this.getCached<boolean>(cacheKey)
-
-    if (cached) return
-
-    const requiredEnvVars = [
-      'CLOUDINARY_CLOUD_NAME',
-      'CLOUDINARY_API_KEY',
-      'CLOUDINARY_API_SECRET'
-    ]
-
-    for (const envVar of requiredEnvVars) {
-      if (!process.env[envVar]) {
-        throw new Error(`${envVar} not configured in .env file`)
-      }
-    }
-
-    this.setCache(cacheKey, true)
-  }
-
-  /**
-   * 📊 Récupération optimisée de l'usage réel avec cache
-   */
-  private static async getRealUploadCount (): Promise<number> {
-    const cacheKey = 'real-upload-count'
-    const cached = this.getCached<number>(cacheKey)
-
-    if (cached !== null) return cached
-
+  private static async deleteOldAvatars (userId: number): Promise<void> {
     try {
-      const usage = await cloudinary.api.usage()
-      const count = usage.resources || usage.transformations || 0
-      const numericCount = Number(count)
-      const finalCount = isNaN(numericCount) ? this.uploadCount : numericCount
-
-      // Cache court pour l'usage (1 minute)
-      this.cache.set(cacheKey, {
-        data: finalCount,
-        timestamp: Date.now() - (this.CACHE_TTL - 60000)
-      })
-
-      return finalCount
-    } catch (error) {
-      console.warn('⚠️ Cannot fetch real usage from Cloudinary:', error)
-      return this.uploadCount
-    }
-  }
-
-  /**
-   * 🔍 Vérification d'existence avec cache
-   */
-  private static async imageExists (publicId: string): Promise<boolean> {
-    const cacheKey = `image-exists-${publicId}`
-    const cached = this.getCached<boolean>(cacheKey)
-
-    if (cached !== null) return cached
-
-    try {
-      await cloudinary.api.resource(`avatars/${publicId}`)
-      this.setCache(cacheKey, true)
-      return true
-    } catch (error: any) {
-      const exists = error.error?.http_code !== 404
-      if (error.error?.http_code === 404) {
-        this.setCache(cacheKey, false)
-      }
-
-      if (error.error?.http_code !== 404) {
-        console.warn(`⚠️ Error checking image existence: ${error.message}`)
-      }
-
-      return exists
-    }
-  }
-
-  /**
-   * ✅ Vérification hybride des limites avec cache intelligent
-   */
-  static async canUpload (): Promise<boolean> {
-    const currentMonth = new Date().getMonth()
-
-    // Reset mensuel automatique
-    if (currentMonth !== this.monthlyReset) {
-      this.uploadCount = 0
-      this.monthlyReset = currentMonth
-      this.cache.clear() // Clear cache lors du reset mensuel
-      console.log('🔄 Monthly counter reset and cache cleared')
-    }
-
-    try {
-      const realUsage = await this.getRealUploadCount()
-      console.log(
-        `📊 Usage check - Real: ${realUsage}/${this.MONTHLY_LIMIT}, Local: ${this.uploadCount}/${this.MONTHLY_LIMIT}`
+      const files = await readdir(this.UPLOAD_DIR)
+      const userFiles = files.filter(
+        file =>
+          file.startsWith(`user_${userId}_`) ||
+          file.startsWith(`user_${userId}.`)
       )
 
-      return realUsage < this.MONTHLY_LIMIT
+      if (userFiles.length > 0) {
+        await Promise.all(
+          userFiles.map(file =>
+            unlink(join(this.UPLOAD_DIR, file)).catch(() => null)
+          )
+        )
+        console.log(
+          `🗑️ Cleaned ${userFiles.length} old avatar files for user ${userId}`
+        )
+      }
     } catch (error) {
-      console.warn('⚠️ Fallback to local counter due to API error')
-      return this.uploadCount < this.MONTHLY_LIMIT
+      console.warn('Could not clean old avatars:', error)
     }
   }
 
   /**
-   * 📤 Upload ultra-optimisé avec support multi-format
+   * 🎞️ Traitement optimisé des GIFs/Vidéos avec FFmpeg
+   */
+  private static async processAnimatedMedia (
+    inputBuffer: Buffer,
+    userId: number,
+    timestamp: number,
+    mediaType: 'gif' | 'video'
+  ): Promise<{ processed: Record<string, Buffer>; metadata: any }> {
+    const ffmpegAvailable = await this.checkFFmpeg()
+    if (!ffmpegAvailable) {
+      throw new Error(
+        'FFmpeg is required for GIF/Video processing but not available'
+      )
+    }
+
+    const tempInput = join(
+      this.TEMP_DIR,
+      `input_${userId}_${timestamp}.${mediaType === 'gif' ? 'gif' : 'mp4'}`
+    )
+    await Bun.write(tempInput, inputBuffer)
+
+    const processed: Record<string, Buffer> = {}
+    const baseFilename = `user_${userId}_${timestamp}`
+
+    try {
+      // 🎯 Génération des 2 tailles optimisées en WebM (meilleur format pour animations)
+      for (const [size, config] of Object.entries(this.AVATAR_SIZES)) {
+        const outputFile = join(this.UPLOAD_DIR, `${baseFilename}_${size}.webm`)
+
+        await this.runFFmpeg([
+          '-i',
+          tempInput,
+          '-vf',
+          `scale=${config.width}:${config.height}:flags=lanczos`,
+          '-c:v',
+          'libvpx-vp9',
+          '-crf',
+          '30',
+          '-b:v',
+          '0',
+          '-pix_fmt',
+          'yuva420p',
+          '-an', // Pas d'audio
+          '-f',
+          'webm',
+          '-y',
+          outputFile
+        ])
+
+        const buffer = await Bun.file(outputFile).arrayBuffer()
+        processed[size] = Buffer.from(buffer)
+      }
+
+      return {
+        processed,
+        metadata: {
+          width: this.AVATAR_SIZES.medium.width,
+          height: this.AVATAR_SIZES.medium.height,
+          format: 'webm',
+          originalSize: inputBuffer.length,
+          compressedSizes: Object.fromEntries(
+            Object.entries(processed).map(([key, buffer]) => [
+              key,
+              buffer.length
+            ])
+          )
+        }
+      }
+    } finally {
+      await unlink(tempInput).catch(() => null)
+    }
+  }
+
+  /**
+   * 🖼️ Traitement optimisé des images statiques
+   */
+  private static async processStaticImage (
+    inputBuffer: Buffer,
+    userId: number,
+    timestamp: number
+  ): Promise<{ processed: Record<string, Buffer>; metadata: any }> {
+    const image = sharp(inputBuffer)
+    const metadata = await image.metadata()
+    const processed: Record<string, Buffer> = {}
+    const baseFilename = `user_${userId}_${timestamp}`
+
+    console.log(
+      `📊 Processing ${metadata.format} ${metadata.width}x${
+        metadata.height
+      } (${(inputBuffer.length / 1024).toFixed(1)}KB)`
+    )
+
+    // 🎯 Génération des 2 tailles optimisées
+    for (const [size, config] of Object.entries(this.AVATAR_SIZES)) {
+      const baseImage = image.clone().resize(config.width, config.height, {
+        fit: 'cover',
+        position: 'centre'
+      })
+
+      // Essayer AVIF d'abord (meilleur format), puis WebP, puis JPEG
+      let buffer: Buffer
+      let format: string
+      let extension: string
+
+      try {
+        // 1. AVIF (meilleur compression)
+        buffer = await baseImage
+          .clone()
+          .avif({
+            quality: config.quality,
+            effort: 6
+          })
+          .toBuffer()
+        format = 'avif'
+        extension = 'avif'
+      } catch {
+        try {
+          // 2. WebP (fallback)
+          buffer = await baseImage
+            .clone()
+            .webp({
+              quality: config.quality,
+              effort: 6
+            })
+            .toBuffer()
+          format = 'webp'
+          extension = 'webp'
+        } catch {
+          // 3. JPEG (compatibilité maximale)
+          buffer = await baseImage
+            .clone()
+            .jpeg({
+              quality: config.quality,
+              progressive: true
+            })
+            .toBuffer()
+          format = 'jpeg'
+          extension = 'jpg'
+        }
+      }
+
+      // Sauvegarde du fichier
+      const filename = `${baseFilename}_${size}.${extension}`
+      await Bun.write(join(this.UPLOAD_DIR, filename), buffer)
+      processed[size] = buffer
+
+      console.log(
+        `✅ Generated ${size} avatar: ${filename} (${(
+          buffer.length / 1024
+        ).toFixed(1)}KB, ${format})`
+      )
+    }
+
+    return {
+      processed,
+      metadata: {
+        width: metadata.width || 0,
+        height: metadata.height || 0,
+        format: 'optimized',
+        originalSize: inputBuffer.length,
+        compressedSizes: Object.fromEntries(
+          Object.entries(processed).map(([key, buffer]) => [key, buffer.length])
+        )
+      }
+    }
+  }
+
+  /**
+   * 🌐 Génération d'URLs optimisées simplifiées
+   */
+  private static generateOptimizedUrls (
+    userId: number,
+    timestamp: number,
+    format: string
+  ): OptimizedUrls {
+    const baseUrl = `${this.BASE_URL}/uploads/avatars`
+    const baseFilename = `user_${userId}_${timestamp}`
+    const extension = format === 'webm' ? 'webm' : 'avif' // Prioriser AVIF pour les images
+
+    return {
+      original: `${baseUrl}/${baseFilename}_medium.${extension}`,
+      small: `${baseUrl}/${baseFilename}_small.${extension}`,
+      medium: `${baseUrl}/${baseFilename}_medium.${extension}`,
+      large: `${baseUrl}/${baseFilename}_medium.${extension}`, // Même que medium pour compatibilité
+      webp: `${baseUrl}/${baseFilename}_medium.${extension}`,
+      avif:
+        format !== 'webm'
+          ? `${baseUrl}/${baseFilename}_medium.${extension}`
+          : undefined,
+      webm:
+        format === 'webm'
+          ? `${baseUrl}/${baseFilename}_medium.${extension}`
+          : undefined
+    }
+  }
+
+  /**
+   * 📤 Upload principal simplifié
    */
   static async uploadAvatar (
     userId: number,
@@ -341,344 +395,267 @@ export class AvatarService {
     mimeType: string,
     fileName?: string
   ): Promise<UploadResult> {
-    console.log(`🚀 Starting optimized avatar upload for user ${userId}`)
-
-    // 🔧 Validations
-    this.validateCloudinaryConfig()
-
-    const canUploadResult = await this.canUpload()
-    if (!canUploadResult) {
-      throw new Error(
-        'Monthly upload limit reached. Please try again next month.'
-      )
+    if (file.length > this.MAX_SIZE) {
+      throw new Error('File too large. Maximum 10MB allowed.')
     }
 
-    // 🎯 Détection et configuration
-    const mediaType = this.detectMediaType(mimeType, fileName)
-    const config = this.MEDIA_CONFIGS[mediaType] || this.MEDIA_CONFIGS.image
-    const publicId = `user_${userId}`
-
-    console.log(`📱 Detected media type: ${mediaType} (${mimeType})`)
-
-    // 🔍 Vérification d'existence
-    const isOverwrite = await this.imageExists(publicId)
-    console.log(
-      `${isOverwrite ? '♻️ Replacing' : '➕ Creating'} avatar (${mediaType})`
-    )
+    await this.ensureUploadDir()
 
     try {
-      const base64File = `data:${mimeType};base64,${file.toString('base64')}`
+      const mediaType = this.detectMediaType(mimeType)
+      const timestamp = Date.now()
 
-      // 🚀 Configuration d'upload optimisée
-      const uploadOptions = {
-        folder: 'avatars',
-        public_id: publicId,
-        resource_type: config.resource_type,
-        transformation: config.transformations,
-        overwrite: true,
-        invalidate: true,
-        use_filename: false,
-        unique_filename: false,
-        // 🎯 Génération eager pour formats optimisés
-        eager: config.eager_transformations.map(transform => ({
-          transformation: { ...config.transformations[0], ...transform }
-        })),
-        eager_async: false, // Génération synchrone pour disponibilité immédiate
-        // 🗂️ Métadonnées utiles
-        context: {
-          user_id: userId.toString(),
-          upload_type: 'avatar',
-          media_type: mediaType,
-          timestamp: new Date().toISOString()
-        }
-      }
+      console.log(`📁 Detected media type: ${mediaType}`)
 
-      console.log(
-        `🔧 Upload config: ${config.resource_type} with ${config.eager_transformations.length} eager formats`
-      )
+      await this.deleteOldAvatars(userId)
 
-      // 📤 Upload principal
-      const uploadResult = await cloudinary.uploader.upload(
-        base64File,
-        uploadOptions
-      )
+      let processed: Record<string, Buffer>
+      let metadata: any
+      let finalFormat: string
 
-      // 📊 Gestion du compteur intelligent
-      if (!isOverwrite) {
-        this.uploadCount++
-        console.log(
-          `📈 Credit consumed. Count: ${this.uploadCount}/${this.MONTHLY_LIMIT}`
+      if (mediaType === 'gif' || mediaType === 'video') {
+        const result = await this.processAnimatedMedia(
+          file,
+          userId,
+          timestamp,
+          mediaType
         )
+        processed = result.processed
+        metadata = result.metadata
+        finalFormat = 'webm'
       } else {
-        console.log(
-          `♻️ Overwrite - no credit consumed. Count: ${this.uploadCount}/${this.MONTHLY_LIMIT}`
-        )
+        const result = await this.processStaticImage(file, userId, timestamp)
+        processed = result.processed
+        metadata = result.metadata
+        finalFormat = 'avif'
       }
 
-      // 🌐 Génération des URLs optimisées
+      this.uploadCount++
+
       const optimizedUrls = this.generateOptimizedUrls(
-        publicId,
-        config.resource_type,
-        uploadResult.format
+        userId,
+        timestamp,
+        finalFormat
       )
 
-      // 🗑️ Invalidation cache
-      this.cache.delete(`image-exists-${publicId}`)
-      this.cache.delete('real-upload-count')
+      const mainSize = metadata.compressedSizes.medium
 
       const result: UploadResult = {
-        secure_url: uploadResult.secure_url,
-        public_id: uploadResult.public_id,
-        format: uploadResult.format,
-        width: uploadResult.width,
-        height: uploadResult.height,
-        bytes: uploadResult.bytes,
-        resource_type: uploadResult.resource_type,
+        secure_url: optimizedUrls.medium!,
+        public_id: `user_${userId}`,
+        format: finalFormat,
+        width: metadata.width,
+        height: metadata.height,
+        bytes: mainSize,
+        resource_type: mediaType,
         optimized_urls: optimizedUrls,
-        is_overwrite: isOverwrite
+        is_overwrite: true
       }
 
-      console.log(
-        `✅ Avatar ${isOverwrite ? 'replaced' : 'uploaded'} successfully`
-      )
-      console.log(`🔗 Main URL: ${result.secure_url}`)
-      console.log(
-        `🌐 Optimized formats: ${Object.keys(optimizedUrls)
-          .filter(k => k !== 'original')
-          .join(', ')}`
-      )
-      console.log(
-        `💾 Saved ~${this.calculateSavings(
-          uploadResult.bytes,
-          mediaType
-        )}% bandwidth`
-      )
+      console.log({result})
 
-      // 📊 Affichage usage final
-      try {
-        const realUsage = await this.getRealUploadCount()
-        console.log(
-          `📊 Real usage after upload: ${realUsage}/${this.MONTHLY_LIMIT}`
-        )
-      } catch (error) {
-        console.log(`📊 Local count: ${this.uploadCount}/${this.MONTHLY_LIMIT}`)
-      }
-
+      this.setCache(`avatar-${userId}`, result)
+      this.setCache(`all-urls-${userId}`, optimizedUrls)
       return result
     } catch (error: any) {
-      console.error('❌ Optimized upload error:', error)
-
-      // 🚨 Gestion d'erreurs améliorée
-      if (error.message?.includes('api_key')) {
-        throw new Error(
-          'Cloudinary API key is missing or invalid. Check your .env configuration.'
-        )
-      }
-      if (
-        error.message?.includes('quota') ||
-        error.message?.includes('credits') ||
-        error.message?.includes('limit')
-      ) {
-        throw new Error(
-          'Monthly upload limit reached on Cloudinary. Please try again next month.'
-        )
-      }
-      if (error.message?.includes('timeout')) {
-        throw new Error('Upload timeout. Please try again with a smaller file.')
-      }
-      if (error.message?.includes('format')) {
-        throw new Error(
-          'Unsupported file format. Please use JPEG, PNG, GIF, WebP, or MP4.'
-        )
-      }
-
-      throw new Error(`Upload failed: ${error.message || 'Unknown error'}`)
+      console.error('❌ Upload error:', error)
+      throw new Error(`Upload failed: ${error.message}`)
     }
   }
 
   /**
-   * 📊 Calcul des économies de bande passante
-   */
-  private static calculateSavings (
-    originalBytes: number,
-    mediaType: string
-  ): number {
-    const savings = {
-      image: 30, // WebP/AVIF vs JPEG/PNG
-      gif: 80, // MP4/WebM vs GIF
-      video: 20 // Compression optimisée
-    }
-    return savings[mediaType as keyof typeof savings] || 0
-  }
-
-  /**
-   * 🖼️ Génération d'URLs avec détection automatique du format optimal
-   */
-  static getAvatarUrl (
-    userId: number,
-    size: 'small' | 'medium' | 'large' = 'large',
-    preferredFormat?: 'webp' | 'avif' | 'mp4' | 'webm' | 'auto'
-  ): string {
-    const sizes = {
-      small: { width: 50, height: 50 },
-      medium: { width: 100, height: 100 },
-      large: { width: 200, height: 200 }
-    }
-
-    const baseConfig = {
-      ...sizes[size],
-      crop: 'fill',
-      gravity: 'face',
-      quality: 'auto:good',
-      secure: true,
-      flags: 'fallback_image',
-      default_image: 'default-avatar.png'
-    }
-
-    // 🎯 Format intelligent basé sur le support navigateur
-    if (preferredFormat === 'auto' || !preferredFormat) {
-      return cloudinary.url(`avatars/user_${userId}`, {
-        ...baseConfig,
-        format: 'auto', // Cloudinary choisit automatiquement
-        fetch_format: 'auto'
-      })
-    }
-
-    return cloudinary.url(`avatars/user_${userId}`, {
-      ...baseConfig,
-      format: preferredFormat
-    })
-  }
-
-  /**
-   * 🌐 Génération d'un set complet d'URLs pour différents formats
-   */
-  static getOptimizedAvatarUrls (
-    userId: number,
-    size: 'small' | 'medium' | 'large' = 'large'
-  ): OptimizedUrls {
-    const publicId = `user_${userId}`
-    const mediaType = 'image' // On assume image par défaut, pourrait être détecté
-
-    return this.generateOptimizedUrls(`avatars/${publicId}`, mediaType, 'auto')
-  }
-
-  /**
-   * 📊 Statistiques avancées avec métriques de performance
-   */
-  static async getUsageStats (): Promise<UsageStats> {
-    const cacheKey = 'usage-stats'
-    const cached = this.getCached<UsageStats>(cacheKey)
-
-    if (cached) return cached
-
-    try {
-      const realUsage = await this.getRealUploadCount()
-      const cloudinaryUsage = await cloudinary.api.usage()
-
-      const safeRealUsage = Number(realUsage) || 0
-      const safeLocalCount = Number(this.uploadCount) || 0
-
-      const stats: UsageStats = {
-        uploadsThisMonth: safeRealUsage,
-        localCount: safeLocalCount,
-        remainingUploads: Math.max(0, this.MONTHLY_LIMIT - safeRealUsage),
-        percentageUsed: Math.round((safeRealUsage / this.MONTHLY_LIMIT) * 100),
-        resetDate: new Date(
-          new Date().getFullYear(),
-          new Date().getMonth() + 1,
-          1
-        ).toISOString(),
-        isNearLimit: safeRealUsage > this.MONTHLY_LIMIT * 0.8, // 80% du limit
-        cloudinaryData: {
-          resources: Number(cloudinaryUsage.resources) || 0,
-          transformations: Number(cloudinaryUsage.transformations) || 0,
-          storage: Number(cloudinaryUsage.storage) || 0
-        }
-      }
-
-      // Cache pendant 2 minutes
-      this.cache.set(cacheKey, {
-        data: stats,
-        timestamp: Date.now() - (this.CACHE_TTL - 120000)
-      })
-
-      return stats
-    } catch (error) {
-      const safeLocalCount = Number(this.uploadCount) || 0
-
-      return {
-        uploadsThisMonth: safeLocalCount,
-        localCount: safeLocalCount,
-        remainingUploads: Math.max(0, this.MONTHLY_LIMIT - safeLocalCount),
-        percentageUsed: Math.round((safeLocalCount / this.MONTHLY_LIMIT) * 100),
-        resetDate: new Date(
-          new Date().getFullYear(),
-          new Date().getMonth() + 1,
-          1
-        ).toISOString(),
-        isNearLimit: safeLocalCount > this.MONTHLY_LIMIT * 0.8,
-        error: 'Could not fetch Cloudinary usage data'
-      }
-    }
-  }
-
-  /**
-   * 🔍 Vérification d'existence publique
-   */
-  static async avatarExists (userId: number): Promise<boolean> {
-    return await this.imageExists(`user_${userId}`)
-  }
-
-  /**
-   * 🗑️ Suppression optimisée avec nettoyage cache
+   * 🗑️ Suppression d'avatar
    */
   static async deleteAvatar (userId: number): Promise<boolean> {
     try {
-      console.log(`🗑️ Deleting avatar for user ${userId}`)
+      await this.deleteOldAvatars(userId)
 
-      const publicId = `user_${userId}`
+      // Nettoyage cache
+      this.cache.delete(`avatar-${userId}`)
+      this.cache.delete(`all-urls-${userId}`)
+      this.cache.delete(`image-exists-user_${userId}`)
 
-      // 🚀 Suppression en parallèle des différents formats
-      const deletePromises = [
-        cloudinary.uploader.destroy(`avatars/${publicId}`, {
-          resource_type: 'image'
-        }),
-        cloudinary.uploader.destroy(`avatars/${publicId}`, {
-          resource_type: 'video'
-        })
-      ]
+      console.log(`✅ Deleted avatar for user ${userId}`)
+      return true
+    } catch (error) {
+      console.error(`❌ Delete error for user ${userId}:`, error)
+      return false
+    }
+  }
 
-      const results = await Promise.allSettled(deletePromises)
-      const successful = results.some(
-        result => result.status === 'fulfilled' && result.value.result === 'ok'
+  static async deleteAvatarFast (userId: number): Promise<boolean> {
+    return this.deleteAvatar(userId)
+  }
+
+  /**
+   * ⚡ Vérifications rapides
+   */
+  static async canUpload (): Promise<boolean> {
+    const currentMonth = new Date().getMonth()
+    if (currentMonth !== this.monthlyReset) {
+      this.uploadCount = 0
+      this.monthlyReset = currentMonth
+    }
+    return this.uploadCount < this.MONTHLY_LIMIT
+  }
+
+  static async canUploadFast (): Promise<boolean> {
+    return this.canUpload()
+  }
+
+  /**
+   * 📊 Stats d'usage
+   */
+  static async getUsageStatsFast (): Promise<UsageStats> {
+    const cacheKey = 'usage-stats'
+    const cached = this.getCached<UsageStats>(cacheKey)
+    if (cached) return cached
+
+    try {
+      const files = await readdir(this.UPLOAD_DIR)
+      const avatarFiles = files.filter(
+        file =>
+          file.startsWith('user_') &&
+          (file.endsWith('.webm') ||
+            file.endsWith('.avif') ||
+            file.endsWith('.webp') ||
+            file.endsWith('.jpg'))
       )
 
-      if (successful) {
-        console.log(`✅ Avatar deleted for user ${userId}`)
-
-        // 🗑️ Nettoyage cache
-        this.cache.delete(`image-exists-${publicId}`)
-        this.cache.delete('real-upload-count')
-        this.cache.delete('usage-stats')
-
-        return true
-      } else {
-        console.log(`⚠️ Avatar not found or already deleted for user ${userId}`)
-        return false
+      let totalSize = 0
+      for (const file of avatarFiles) {
+        try {
+          const fileSize = await Bun.file(join(this.UPLOAD_DIR, file)).size
+          totalSize += fileSize
+        } catch {
+          continue
+        }
       }
+
+      const uniqueUsers = new Set(avatarFiles.map(file => file.split('_')[1]))
+        .size
+
+      const stats: UsageStats = {
+        uploadsThisMonth: this.uploadCount,
+        localCount: uniqueUsers,
+        remainingUploads: Math.max(0, this.MONTHLY_LIMIT - this.uploadCount),
+        percentageUsed: Math.round(
+          (this.uploadCount / this.MONTHLY_LIMIT) * 100
+        ),
+        resetDate: new Date(
+          new Date().getFullYear(),
+          new Date().getMonth() + 1,
+          1
+        ).toISOString(),
+        isNearLimit: this.uploadCount > this.MONTHLY_LIMIT * 0.8,
+        diskUsage: {
+          totalFiles: avatarFiles.length,
+          totalSizeMB: Math.round((totalSize / 1024 / 1024) * 100) / 100,
+          averageCompressionRatio: 85,
+          estimatedSavingsMB:
+            Math.round(((totalSize * 5.67) / 1024 / 1024) * 100) / 100
+        }
+      }
+
+      this.setCache(cacheKey, stats)
+      return stats
     } catch (error) {
-      console.error(`❌ Error deleting avatar for user ${userId}:`, error)
+      return {
+        uploadsThisMonth: this.uploadCount,
+        localCount: 0,
+        remainingUploads: this.MONTHLY_LIMIT,
+        percentageUsed: 0,
+        resetDate: new Date().toISOString(),
+        isNearLimit: false,
+        diskUsage: {
+          totalFiles: 0,
+          totalSizeMB: 0,
+          averageCompressionRatio: 0,
+          estimatedSavingsMB: 0
+        }
+      }
+    }
+  }
+
+  static async getUsageStatsAccurate (): Promise<UsageStats> {
+    return this.getUsageStatsFast()
+  }
+
+  /**
+   * 🖼️ Génération d'URLs
+   */
+  static getAvatarUrl (
+    userId: number,
+    size: 'small' | 'medium' | 'large' = 'medium',
+    preferredFormat?: 'webp' | 'avif' | 'webm' | 'auto'
+  ): string {
+    const cached = this.getCached<UploadResult>(`avatar-${userId}`)
+    if (cached?.optimized_urls) {
+      const requestedSize = size === 'large' ? 'medium' : size
+      return (
+        cached.optimized_urls[requestedSize] ||
+        cached.optimized_urls.medium ||
+        cached.secure_url
+      )
+    }
+
+    return `${this.BASE_URL}/api/avatar/default?size=${size}`
+  }
+
+  static getOptimizedAvatarUrls (userId: number): OptimizedUrls {
+    const cached = this.getCached<OptimizedUrls>(`all-urls-${userId}`)
+    if (cached) return cached
+
+    const defaultUrl = `${this.BASE_URL}/api/avatar/default`
+    return {
+      original: defaultUrl,
+      small: defaultUrl,
+      medium: defaultUrl,
+      large: defaultUrl
+    }
+  }
+
+  static getAllOptimizedUrls (userId: number): {
+    large: OptimizedUrls
+    medium: OptimizedUrls
+    small: OptimizedUrls
+  } {
+    const urls = this.getOptimizedAvatarUrls(userId)
+    return { large: urls, medium: urls, small: urls }
+  }
+
+  /**
+   * 🔍 Vérification d'existence
+   */
+  static async avatarExists (userId: number): Promise<boolean> {
+    const cacheKey = `avatar-exists-${userId}`
+    const cached = this.getCached<boolean>(cacheKey)
+    if (cached !== null) return cached
+
+    try {
+      const files = await readdir(this.UPLOAD_DIR)
+      const hasAvatar = files.some(
+        file =>
+          file.startsWith(`user_${userId}_`) &&
+          (file.endsWith('.webm') ||
+            file.endsWith('.avif') ||
+            file.endsWith('.webp') ||
+            file.endsWith('.jpg'))
+      )
+
+      this.setCache(cacheKey, hasAvatar)
+      return hasAvatar
+    } catch {
       return false
     }
   }
 
   /**
-   * 🔄 Utilitaires de maintenance
+   * 🔧 Utilitaires
    */
   static resetLocalCounter (): void {
     this.uploadCount = 0
-    console.log('🔄 Local upload counter reset to 0')
+    console.log('🔄 Upload counter reset')
   }
 
   static clearCache (): void {
@@ -693,54 +670,35 @@ export class AvatarService {
     }
   }
 
-  /**
-   * 🩺 Health check pour monitoring
-   */
-  static async healthCheck (): Promise<{
-    status: 'healthy' | 'degraded' | 'unhealthy'
-    cloudinary_api: boolean
-    upload_capacity: boolean
-    cache_size: number
-    errors: string[]
-  }> {
-    const errors: string[] = []
-    let cloudinaryApi = false
-    let uploadCapacity = false
-
-    try {
-      // Test API Cloudinary
-      await cloudinary.api.ping()
-      cloudinaryApi = true
-    } catch (error) {
-      errors.push('Cloudinary API unreachable')
-    }
-
-    try {
-      // Test capacité d'upload
-      uploadCapacity = await this.canUpload()
-      if (!uploadCapacity) {
-        errors.push('Upload limit reached')
-      }
-    } catch (error) {
-      errors.push('Cannot check upload capacity')
-    }
-
-    const status =
-      errors.length === 0
-        ? 'healthy'
-        : errors.length === 1
-        ? 'degraded'
-        : 'unhealthy'
-
-    const z = {
-      status,
-      cloudinary_api: cloudinaryApi,
-      upload_capacity: uploadCapacity,
-      cache_size: this.cache.size,
-      errors
-    } as any
-
-    console.log(z)
-    return z
+  static async cleanupUserTransformations (userId: number): Promise<void> {
+    console.log(`✅ No cleanup needed for local files (user ${userId})`)
   }
 }
+
+// 🔧 Fonction de création d'utilisateur (inchangée)
+export async function createUser (
+  userData: CreateUserRequest
+): Promise<User | null> {
+  try {
+    const hashedPassword = await Bun.password.hash(userData.password, {
+      algorithm: 'bcrypt',
+      cost: 12
+    })
+
+    const userToInsert: Omit<User, 'id'> = {
+      username: userData.username,
+      password: hashedPassword,
+      role: userData.role,
+      image_path: userData.image_path || null
+    }
+
+    const newUser = await insertUserFixed(userToInsert)
+    return newUser
+  } catch (error) {
+    console.error('Error creating user:', error)
+    return null
+  }
+}
+
+// ✅ Export pour compatibilité parfaite
+export { AvatarService as CompressedAvatarService }

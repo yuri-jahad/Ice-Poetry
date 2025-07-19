@@ -1,5 +1,4 @@
 // auth.helpers.ts
-import type { USERS } from "@database/database.types";
 import type { User } from "@user/user.types";
 
 /**
@@ -73,7 +72,7 @@ export function createExpiredCookie(): string {
  * Maps a database User entity to a User (removes sensitive data)
  * Optimized: validation and error handling
  */
-export function mapToUserClient(user: USERS): User {
+export function mapToUserClient(user: User): User {
   if (!user) {
     throw new Error("User is required for mapping");
   }
@@ -87,6 +86,9 @@ export function mapToUserClient(user: USERS): User {
     username: user.username,
     role: user.role,
     image_path: user.image_path,
+    bio: user.bio,
+    syllable_color: user.syllable_color, 
+    location: user.location
   };
 }
 
